@@ -13,17 +13,21 @@
 # v4: make memory output easier to import in Excel
 # v5: auto-restart in case a monitored process dies
 # v6: fix TOP memory parsing using printf utility
+# v7: add date to output csv, remove PROCNAME and rather make the 3 processes checked regularly
+#     more generic, by adding AUX_PROCESS1/2/3 vars
+# v8: if the processes die for some reason, retry in an infinite loop until they go up again,
+#     instead of doing only 1 attempt
 #
 # Note that 
 #
 # 1) apparently similar tool
-#        DAG http://dag.wiee.rs/home-made/dstat/
-#    does not track the CPU usage of single threads
+#    DAG http://dag.wiee.rs/home-made/dstat/
+# does not track the CPU usage of single threads
 #
 # 2) this is just a wrapper for
-#      pidstat
-#      top
-#    utilities
+#   pidstat
+#   top
+# utilities
 
 
 # global configs
@@ -32,16 +36,21 @@ OUTPUT_COMMA_AS_DECIMAL_SEPARATOR=1
 # defines how much "average" CPU usage results: 3sec is the default... lower means higher temporal resolution, higher means more smoothy averages
 TOP_DELAY=5
 
+# how often should I log (in sec)
+INTERVAL=1
 
-AUX_PROCESS1="init"
-AUX_PROCESS2="init"
-AUX_PROCESS3="init"
+AUX_PROCESS1="YourProcessName1"
+AUX_PROCESS2="YourProcessName2"
+AUX_PROCESS3="YourProcessName3"
 
 
 function show_help()
 {
-    echo "Usage: $0 [PROCNAME] [THREADNAME REGEX] [USE PIDSTAT]"
-    echo "Automates TOP/PIDSTAT monitoring and resource usage statistics export"
+    echo "Usage: $0 THREADNAME_REGEX [USE_PIDSTAT]"
+    echo "Automates TOP/PIDSTAT monitoring and resource usage statistics export for Excel import"
+    echo "  THREADNAME_REGEX = expression matching one or more thread names running on the system"
+    echo "                     e.g. 'mythread\|myotherthread'       "
+    echo "  USE_PIDSTAT = if 'yes', pidstat rather than top will be used (default=no)"
 }      
 
 function fix_mem_by_top_for_excel()
@@ -116,7 +125,7 @@ function parse_pidstat
     # compared to TOP, PIDSTAT has the advantage that the columns always have the same INDEXES,
     # and same SORTING regardless of the user configuration for TOP utility:
     
-    selected_lines=$(pidstat -u -r -t -C $THREADNAME)
+    selected_lines=$(pidstat -u -r -t -I -C $THREADNAME)
     #echo "$selected_lines"
     
     # example of SELECTED_THREADS_STATS contents for THREADNAME=mythread
@@ -317,16 +326,16 @@ function check_if_aux_processes_are_alive
     ISALIVE=true
     
     ps -p $AUX_PROCESS1_PROCPID >/dev/null 2>&1
-    if [[ $? != 0 ]]; then ISALIVE=false; fi
+    if [[ $? != 0 ]]; then ISALIVE=false; echo ; echo "$AUX_PROCESS1 (PID=$AUX_PROCESS1_PROCPID) is dead..." ; echo ; fi
 
     ps -p $AUX_PROCESS2_PROCPID >/dev/null 2>&1
-    if [[ $? != 0 ]]; then ISALIVE=false; fi
+    if [[ $? != 0 ]]; then ISALIVE=false; echo ; echo "$AUX_PROCESS2 (PID=$AUX_PROCESS2_PROCPID) is dead..." ; echo ; fi
 
     ps -p $AUX_PROCESS3_PROCPID >/dev/null 2>&1
-    if [[ $? != 0 ]]; then ISALIVE=false; fi
+    if [[ $? != 0 ]]; then ISALIVE=false; echo ; echo "$AUX_PROCESS3 (PID=$AUX_PROCESS3_PROCPID) is dead..." ; echo ; fi
 }
 
-function get_resources_probe_chain
+function get_resources_auxprocesses
 {
     # by using -H option with our custom .toprc, we revert to "show threads OFF"
     selected_lines=$(top -s -b -n 1 -H -p $AUX_PROCESS1_PROCPID -p $AUX_PROCESS2_PROCPID -p $AUX_PROCESS3_PROCPID)
@@ -348,27 +357,27 @@ function get_resources_probe_chain
     AUX_PROCESS1_MEM=`echo "$selected_lines" | grep $AUX_PROCESS1 | awk '{print $2}'`
     AUX_PROCESS2_MEM=`echo "$selected_lines" | grep $AUX_PROCESS2 | awk '{print $2}'`
     AUX_PROCESS3_MEM=`echo "$selected_lines" | grep $AUX_PROCESS3 | awk '{print $2}'`
+
+    # help Excel import process:
+    AUX_PROCESS1_MEM=$(fix_mem_by_top_for_excel $AUX_PROCESS1_MEM)
+    AUX_PROCESS2_MEM=$(fix_mem_by_top_for_excel $AUX_PROCESS2_MEM)
+    AUX_PROCESS3_MEM=$(fix_mem_by_top_for_excel $AUX_PROCESS3_MEM)    
     
     # NOTE: total CPU column is the 3-th:
     AUX_PROCESS1_CPU=`echo "$selected_lines" | grep $AUX_PROCESS1 | awk '{print $3}'`
     AUX_PROCESS2_CPU=`echo "$selected_lines" | grep $AUX_PROCESS2 | awk '{print $3}'`
     AUX_PROCESS3_CPU=`echo "$selected_lines" | grep $AUX_PROCESS3 | awk '{print $3}'`
-    
-    # help Excel import process:
-    AUX_PROCESS1_MEM=$(fix_mem_by_top_for_excel $AUX_PROCESS1_MEM)
-    AUX_PROCESS2_MEM=$(fix_mem_by_top_for_excel $AUX_PROCESS2_MEM)
-    AUX_PROCESS3_MEM=$(fix_mem_by_top_for_excel $AUX_PROCESS3_MEM)
 }
 
 function format_outputfile_header
 {
     # NOTE: by using ; we allow Excel to directly understand the resulting file, without IMPORT steps
     
-    OUTPUTLINE="Time;Mem $AUX_PROCESS1 (B);Mem $AUX_PROCESS2 (B);Mem $AUX_PROCESS3 (B);Mem $PROCNAME (B);CPU $AUX_PROCESS1;CPU $AUX_PROCESS2;CPU $AUX_PROCESS3"
+    OUTPUTLINE="Day;Time;Mem $AUX_PROCESS1 (B);Mem $AUX_PROCESS2 (B);Mem $AUX_PROCESS3 (B);CPU $AUX_PROCESS1;CPU $AUX_PROCESS2;CPU $AUX_PROCESS3"
     
     # then output variable-number columns
     for ((c=0; c < $NUM_THREADS; c++)); do
-        OUTPUTLINE="$OUTPUTLINE;CPU thread ${CPUTHREAD_NAME[$c]}"
+        OUTPUTLINE="$OUTPUTLINE;CPU ${CPUTHREAD_NAME[$c]}"
     done
 }
 
@@ -376,8 +385,9 @@ function format_outputfile_line
 {
     # NOTE: by using ; we allow Excel to directly understand the resulting file, without IMPORT steps
     
-    now=`date +%H:%M:%S`
-    OUTPUTLINE="$now;$AUX_PROCESS1_MEM;$AUX_PROCESS2_MEM;$AUX_PROCESS3_MEM;$MEMVALUE;$AUX_PROCESS1_CPU;$AUX_PROCESS2_CPU;$AUX_PROCESS3_CPU"
+    now_date=`date +%F`
+    now_time=`date +%H:%M:%S`
+    OUTPUTLINE="$now_date;$now_time;$AUX_PROCESS1_MEM;$AUX_PROCESS2_MEM;$AUX_PROCESS3_MEM;$AUX_PROCESS1_CPU;$AUX_PROCESS2_CPU;$AUX_PROCESS3_CPU"
     
     # then output variable-number columns
     for ((c=0; c < $NUM_THREADS; c++)); do
@@ -385,20 +395,30 @@ function format_outputfile_line
     done
 }
 
+function sanitize_name
+{
+    # first, strip underscores
+    CLEAN=${OUTPUTFILE// /_}
+    # now, clean out anything that's not alphanumeric or an underscore or a dash
+    CLEAN=${CLEAN//[^a-zA-Z0-9_-.]/}
+    
+    # return value by echo:
+    echo $CLEAN
+}
+
 function setup
 {
     # default value:
-    OUTPUTFILE="$(hostname)-$PROCNAME-$(date +%F-started-at%H-%M)$PIDSTAT_POTSFIX.csv"
-
-    PROCPID=`pidof $PROCNAME`
+    OUTPUTFILE="$(hostname)-$THREADNAME-$(date +%F-started-at%H-%M)$PIDSTAT_POTSFIX.csv"
+    OUTPUTFILE=$(sanitize_name $OUTPUTFILE)
 
     AUX_PROCESS1_PROCPID=`pidof $AUX_PROCESS1`
     AUX_PROCESS2_PROCPID=`pidof $AUX_PROCESS2`
     AUX_PROCESS3_PROCPID=`pidof $AUX_PROCESS3`
 
-    if [[ -z $AUX_PROCESS1_PROCPID ]]; then echo No $AUX_PROCESS1 found. Exiting. ; exit 0; fi
-    if [[ -z $AUX_PROCESS2_PROCPID ]]; then echo No $AUX_PROCESS2 found. Exiting. ; exit 0; fi
-    if [[ -z $AUX_PROCESS3_PROCPID ]]; then echo No $AUX_PROCESS3 found. Exiting. ; exit 0; fi
+    if [[ -z $AUX_PROCESS1_PROCPID ]]; then echo "No $AUX_PROCESS1 found..." ; SETUP_DONE=false; return; fi
+    if [[ -z $AUX_PROCESS2_PROCPID ]]; then echo "No $AUX_PROCESS2 found..." ; SETUP_DONE=false; return; fi
+    if [[ -z $AUX_PROCESS3_PROCPID ]]; then echo "No $AUX_PROCESS3 found..." ; SETUP_DONE=false; return; fi
 
 
     # before using any TOP function, install our custom TOP config file:
@@ -413,37 +433,39 @@ function setup
 
 
     echo "CPU activity logger starting with configuration:"
-    echo " process name = $PROCNAME (pid=$PROCPID)"
     echo " thread name = $THREADNAME ($NUM_THREADS threads matching)"
-    echo " output file = $OUTPUTFILE"
     echo "Other processes automatically monitored:"
-    echo " $AUX_PROCESS1 PID = $AUX_PROCESS1_PROCPID"
-    echo " $AUX_PROCESS2 PID = $AUX_PROCESS2_PROCPID"
-    echo " $AUX_PROCESS3 ENGINE PID = $AUX_PROCESS3_PROCPID"
+    echo " $AUX_PROCESS1, with PID = $AUX_PROCESS1_PROCPID"
+    echo " $AUX_PROCESS2, with PID = $AUX_PROCESS2_PROCPID"
+    echo " $AUX_PROCESS3, with PID = $AUX_PROCESS3_PROCPID"
+    echo "Automatically-generated output filename:"
+    echo " $OUTPUTFILE"
 
     if [[ $NUM_THREADS = 0 ]]; then
-        echo "The thread REGEX $THREADNAME does not mach any thread... exiting"
-        exit 0
+        echo "The thread REGEX $THREADNAME does not mach any thread..."
+        SETUP_DONE=false
+        return
     fi
 
     echo "Starting logging..."
     format_outputfile_header
     echo "$OUTPUTLINE" >$OUTPUTFILE
     echo "Data format is $OUTPUTLINE"
+    
+    SETUP_DONE=true
 }
 
 
 
 # main
 
-if [ $# -lt 2 ]; then
+if [ $# -lt 1 ]; then
     show_help
     exit 0
 fi
 
-PROCNAME="$1"
-THREADNAME="$2"
-if [[ "$3" = "yes" ]]; then
+THREADNAME="$1"
+if [[ "$2" = "yes" ]]; then
     USEPIDSTAT=true
     PIDSTAT_POTSFIX="-pidstat"
 else
@@ -452,30 +474,43 @@ else
     PIDSTAT_POTSFIX=""
 fi
 
-setup
- 
-while true; do 
-    check_if_aux_processes_are_alive
-    if $ISALIVE; then
-        
-        if $USEPIDSTAT; then
-            parse_pidstat
-        else
-            parse_top
-        fi
-        format_outputfile_line
+SETUP_DONE=false
 
-        echo "$OUTPUTLINE" >>$OUTPUTFILE
-        echo "Appending line: $OUTPUTLINE"
-        
-        sleep 1
+while true; do 
+    if $SETUP_DONE; then
+        check_if_aux_processes_are_alive
+        if $ISALIVE; then
+
+            if $USEPIDSTAT; then
+                parse_pidstat
+            else
+                parse_top
+            fi
+            get_resources_auxprocesses
+            format_outputfile_line
+
+            echo "$OUTPUTLINE" >>$OUTPUTFILE
+            echo "Appending line: $OUTPUTLINE"
+            
+            sleep $INTERVAL
+        else
+            echo "The check done at"
+            echo "    $(date)"
+            echo "detected a possible restart in some component since one of"
+            echo "  $AUX_PROCESS1 PID = $AUX_PROCESS1_PROCPID"
+            echo "  $AUX_PROCESS2 PID = $AUX_PROCESS2_PROCPID"
+            echo "  $AUX_PROCESS3 PID = $AUX_PROCESS3_PROCPID"
+            echo "is not valid anymore... waiting 2min before restarting logging"
+            SETUP_DONE=false
+            sleep 120
+        fi
     else
-        echo "Detected a possible restart in some component since one of"
-        echo " $AUX_PROCESS1 PID = $AUX_PROCESS1_PROCPID"
-        echo " $AUX_PROCESS2 PID = $AUX_PROCESS2_PROCPID"
-        echo " $AUX_PROCESS3 PID = $AUX_PROCESS3_PROCPID"
-        echo " is not valid anymore... waiting 2min before restarting logging"
-        sleep 120
         setup
+        if ! $SETUP_DONE; then
+            echo "The setup attempt done at"
+            echo "    $(date)"
+            echo "failed. Retrying in 2min"
+            sleep 120
+        fi
     fi
 done
