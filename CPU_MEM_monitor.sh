@@ -7,16 +7,18 @@
 # Last change: Mar 2015
 #
 # HISTORY:
-# v2: use CPU% as sort key
-# v3: fix thread name detection, since now threads are reorderded by CPU%,
-#     make output more smooth by increasing averaging time to 5sec
-# v4: make memory output easier to import in Excel
-# v5: auto-restart in case a monitored process dies
-# v6: fix TOP memory parsing using printf utility
-# v7: add date to output csv, remove PROCNAME and rather make the 3 processes checked regularly
-#     more generic, by adding AUX_PROCESS1/2/3 vars
-# v8: if the processes die for some reason, retry in an infinite loop until they go up again,
-#     instead of doing only 1 attempt
+# v0.2: use CPU% as sort key
+# v0.3: fix thread name detection, since now threads are reorderded by CPU%,
+#       make output more smooth by increasing averaging time to 5sec
+# v0.4: make memory output easier to import in Excel
+# v0.5: auto-restart in case a monitored process dies
+# v0.6: fix TOP memory parsing using printf utility
+# v0.7: add date to output csv, remove PROCNAME and rather make the 3 processes checked regularly
+#       more generic, by adding AUX_PROCESS1/2/3 vars
+# v0.8: if the processes die for some reason, retry in an infinite loop until they go up again,
+#       instead of doing only 1 attempt
+# v0.9: support variable-number of auxiliary processes; provide default values for both aux processes & threadname,
+#     
 #
 # Note that 
 #
@@ -32,6 +34,8 @@
 
 # global configs
 # --------------------------------------------
+
+# Excel and OpenOffice Calc seem to liek the comma more than the dot as decimal separator:
 OUTPUT_COMMA_AS_DECIMAL_SEPARATOR=1
 
 # defines how much "average" CPU usage results: 3sec is the default... lower means higher temporal resolution, higher means more smoothy averages
@@ -40,32 +44,98 @@ TOP_DELAY=5
 # how often should I log (in sec)
 INTERVAL=1
 
-AUX_PROCESS[0]="init"
-AUX_PROCESS[1]="firefox"
+# example default "auxiliary" processes to monitor for aggregated CPU usage and memory usage:
+AUX_PROCESS_NAME[0]="init"
+AUX_PROCESS_NAME[1]="firefox"
 
+# example default thread name to look for (see multithread_example.c):
+THREADNAME="multithread"
+
+VERBOSE=false
+
+# by default use TOP
+USEPIDSTAT=false
+PIDSTAT_POTSFIX=""
 
 
 
 # global vars
 # --------------------------------------------
 
-NUM_PROCESSES=${#AUX_PROCESS[@]}
+NUM_PROCESSES=${#AUX_PROCESS_NAME[@]}
 
-# other arrays:
+# other arrays created later:
 #  AUX_PROCESS_PID
 #  AUX_PROCESS_MEM
 #  AUX_PROCESS_CPU
 
 
 
+# utilities functions
+# --------------------------------------------
+
 function show_help()
 {
-    echo "Usage: $0 THREADNAME_REGEX [USE_PIDSTAT]"
+    echo "Usage: $0 [-h] [-v] [--use-pidstat] [-t THREADNAME_REGEX] [-p AUX_PROCESS1] [-p AUX_PROCESS2] ..."
+    echo "Version 0.9, by Francesco Montorsi"
     echo "Automates TOP/PIDSTAT monitoring and resource usage statistics export for Excel import"
-    echo "  THREADNAME_REGEX = expression matching one or more thread names running on the system"
-    echo "                     e.g. 'mythread\|myotherthread'       "
-    echo "  USE_PIDSTAT = if 'yes', pidstat rather than top will be used (default=no)"
+    echo "  -h              this help"
+    echo "  -v              be verbose"
+    echo "  --use-pidstat   pidstat rather than top will be used"
+    echo "  -t <tregex>     monitor threads whose name match the regex <tregex>; e.g. 'mythread\|myotherthread'"
+    echo "  -p <auxproc>    monitor CPU and memory usage of the auxiliary process <auxproc>"
+    echo "Default option values:"
+    echo "  VERBOSE: $VERBOSE"
+    echo "  USEPIDSTAT: $USEPIDSTAT"
+    echo "  THREADNAME_REGEX: $THREADNAME"
+    for (( i=0; i<$NUM_PROCESSES; i++ )); do
+        echo "  AUX_PROCESS #$i: ${AUX_PROCESS_NAME[$i]}"
+    done
 }      
+
+function parse_args()
+{
+    currp=0
+    while [[ $# -ge 1 ]]; do
+        key="$1"
+        shift
+        
+        #echo "KEY: $key"
+
+        case $key in
+            -v)
+            VERBOSE=true
+            ;;
+            
+            --use-pidstat)
+            USEPIDSTAT=true
+            PIDSTAT_POTSFIX="-pidstat"
+            ;;
+            
+            -t)
+            THREADNAME="$1"
+            shift
+            ;;
+            
+            -p)
+            AUX_PROCESS_NAME[$currp]="$1"
+            currp=$[$currp +1]
+            shift
+            ;;
+            
+            -h|--help)
+            show_help
+            exit 0
+            ;;
+            
+            *)
+            echo "Unknown option $key found..."
+            show_help
+            exit 0
+            ;;
+        esac
+    done
+}
 
 function fix_mem_by_top_for_excel()
 {
@@ -276,25 +346,41 @@ EOF
     echo "$custom_toprc_with_pid" >$TOPRC
 }
 
+function detect_top_version
+{
+    ver_output=$(top -v)
+    if [[ $ver_output == *procps-ng* ]]; then
+        IS_TOP_NG=true
+    else
+        IS_TOP_NG=false
+    fi
+}
+
 function set_top_args
 {
-	# TOP delay option works only when in non-secure mode... check if we can use it:
+    # TOP delay option works only when in non-secure mode... check if we can use it:
     top -b -n 1 -d $TOP_DELAY >/dev/null 2>&1
-	if [[ "$?" = "0" ]]; then
-	    echo "TOP secure mode is disabled: a delay of $TOP_DELAY sec will be used"
-		DELAY_ARG="-d $TOP_DELAY"
-	else
-		echo "TOP secure mode is enabled: the delay of TOP cannot be changed"
-	fi
-	
-	# set also process PID option
-	AUX_PROCESSES_PID_ARG=""
+    if [[ "$?" = "0" ]]; then
+        echo "TOP secure mode is disabled: a delay of $TOP_DELAY sec will be used"
+        DELAY_ARG="-d $TOP_DELAY"
+    else
+        echo "TOP secure mode is enabled: the delay of TOP cannot be changed"
+    fi
+    
+    # set also process PID option
+    AUX_PROCESSES_PID_ARG=""
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
-		AUX_PROCESSES_PID_ARG="$AUX_PROCESSES_PID_ARG -p ${AUX_PROCESS_PID[$i]}"
-	done
-	
-	SHOW_THREADS_ARG="-H"
-	HIDE_THREADS_ARG=""
+        AUX_PROCESSES_PID_ARG="$AUX_PROCESSES_PID_ARG -p ${AUX_PROCESS_PID[$i]}"
+    done
+    
+    detect_top_version
+    if $IS_TOP_NG ; then
+        SHOW_THREADS_ARG="-H"
+        HIDE_THREADS_ARG=""
+    else
+        SHOW_THREADS_ARG=""
+        HIDE_THREADS_ARG="-H"
+    fi
 }
 
 function parse_top
@@ -361,12 +447,12 @@ function check_if_aux_processes_are_alive
     ISALIVE=true
     
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
-		ps -p ${AUX_PROCESS_PID[$i]} >/dev/null 2>&1
-		if [[ $? != 0 ]]; then 
-			ISALIVE=false; 
-			echo ; echo "${AUX_PROCESS[$i]} (PID=${AUX_PROCESS_PID[$i]}) is dead..." ; echo ; 
-		fi
-	done
+        ps -p ${AUX_PROCESS_PID[$i]} >/dev/null 2>&1
+        if [[ $? != 0 ]]; then 
+            ISALIVE=false; 
+            echo ; echo "${AUX_PROCESS_NAME[$i]} (PID=${AUX_PROCESS_PID[$i]}) is dead..." ; echo ; 
+        fi
+    done
 }
 
 function get_resources_auxprocesses
@@ -390,15 +476,15 @@ function get_resources_auxprocesses
     
     # NOTE: VIRT column is the 2-th and is equal for all threads
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
-		AUX_PROCESS_MEM[$i]=`echo "$selected_lines" | grep ${AUX_PROCESS[$i]} | awk '{print $2}'`
+        AUX_PROCESS_MEM[$i]=`echo "$selected_lines" | grep ${AUX_PROCESS_NAME[$i]} | awk '{print $2}'`
 
-		# help Excel import process:
-		AUX_PROCESS_MEM[$i]=$(fix_mem_by_top_for_excel ${AUX_PROCESS_MEM[$i]})
+        # help Excel import process:
+        AUX_PROCESS_MEM[$i]=$(fix_mem_by_top_for_excel ${AUX_PROCESS_MEM[$i]})
     
-		# NOTE: total CPU column is the 3-th:
-		AUX_PROCESS_CPU[$i]=`echo "$selected_lines" | grep ${AUX_PROCESS[$i]} | awk '{print $3}'`
-		
-		#echo "for ${AUX_PROCESS[$i]}, collected CPU=${AUX_PROCESS_CPU[$i]}, MEM=${AUX_PROCESS_MEM[$i]}"
+        # NOTE: total CPU column is the 3-th:
+        AUX_PROCESS_CPU[$i]=`echo "$selected_lines" | grep ${AUX_PROCESS_NAME[$i]} | awk '{print $3}'`
+        
+        #echo "for ${AUX_PROCESS_NAME[$i]}, collected CPU=${AUX_PROCESS_CPU[$i]}, MEM=${AUX_PROCESS_MEM[$i]}"
     done
 }
 
@@ -410,10 +496,10 @@ function format_outputfile_header
     
     # aux processes
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
-		OUTPUTLINE="$OUTPUTLINE;Mem ${AUX_PROCESS[$i]}"
+        OUTPUTLINE="$OUTPUTLINE;Mem ${AUX_PROCESS_NAME[$i]}"
     done
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
-		OUTPUTLINE="$OUTPUTLINE;CPU ${AUX_PROCESS[$i]}"
+        OUTPUTLINE="$OUTPUTLINE;CPU ${AUX_PROCESS_NAME[$i]}"
     done
     
     # output variable-number columns for monitored threads
@@ -432,10 +518,10 @@ function format_outputfile_line
     
     # aux processes
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
-		OUTPUTLINE="$OUTPUTLINE;${AUX_PROCESS_MEM[$i]}"
+        OUTPUTLINE="$OUTPUTLINE;${AUX_PROCESS_MEM[$i]}"
     done
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
-		OUTPUTLINE="$OUTPUTLINE;${AUX_PROCESS_CPU[$i]}"
+        OUTPUTLINE="$OUTPUTLINE;${AUX_PROCESS_CPU[$i]}"
     done
     
     # output variable-number columns for monitored threads
@@ -457,23 +543,23 @@ function sanitize_name
 
 function setup
 {
-	# print config
-	echo "Number of processes to monitor: $NUM_PROCESSES"
+    # print config
+    echo "Number of processes to monitor: $NUM_PROCESSES"
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
-		echo "  process #$i: ${AUX_PROCESS[$i]}"
+        echo "  process #$i: ${AUX_PROCESS_NAME[$i]}"
     done
-	
+    
     # default value:
     OUTPUTFILE="$(hostname)-$THREADNAME-$(date +%F-started-at%H-%M)$PIDSTAT_POTSFIX.csv"
     OUTPUTFILE=$(sanitize_name $OUTPUTFILE)
 
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
-		AUX_PROCESS_PID[$i]=`pidof ${AUX_PROCESS[$i]} | awk '{print $1;}'`
-		if [[ -z ${AUX_PROCESS_PID[$i]} ]]; then 
-			echo "No ${AUX_PROCESS[$i]} found..." ; 
-			SETUP_DONE=false; 
-			return; 
-		fi
+        AUX_PROCESS_PID[$i]=`pidof ${AUX_PROCESS_NAME[$i]} | awk '{print $1;}'`
+        if [[ -z ${AUX_PROCESS_PID[$i]} ]]; then 
+            echo "No ${AUX_PROCESS_NAME[$i]} found..." ; 
+            SETUP_DONE=false; 
+            return; 
+        fi
     done
 
 
@@ -490,13 +576,14 @@ function setup
 
 
     echo "CPU activity logger starting with configuration:"
-    echo " thread name = $THREADNAME ($NUM_THREADS threads matching)"
-    echo "Other processes automatically monitored:"
+    echo "  VERBOSE: $VERBOSE"
+    echo "  USEPIDSTAT: $USEPIDSTAT"
+    echo "  THREADNAME_REGEX: $THREADNAME ($NUM_THREADS threads matching)"
+    echo "  Auxiliary processes automatically monitored:"
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
-		echo " ${AUX_PROCESS[$i]}, with PID = ${AUX_PROCESS_PID[$i]}"
+        echo "    ${AUX_PROCESS_NAME[$i]}, with PID = ${AUX_PROCESS_PID[$i]}"
     done
-    echo "Automatically-generated output filename:"
-    echo " $OUTPUTFILE"
+    echo "  Automatically-generated output filename: $OUTPUTFILE"
 
     if [[ $NUM_THREADS = 0 ]]; then
         echo "The thread REGEX $THREADNAME does not mach any thread..."
@@ -516,23 +603,10 @@ function setup
 
 # main
 
-if [ $# -lt 1 ]; then
-    show_help
-    exit 0
-fi
-
-THREADNAME="$1"
-if [[ "$2" = "yes" ]]; then
-    USEPIDSTAT=true
-    PIDSTAT_POTSFIX="-pidstat"
-else
-    # by default use TOP
-    USEPIDSTAT=false
-    PIDSTAT_POTSFIX=""
-fi
+parse_args $*
 
 SETUP_DONE=false
-
+NUM_LINES_WRITTEN_STDOUT=0
 while true; do 
     if $SETUP_DONE; then
         check_if_aux_processes_are_alive
@@ -547,23 +621,32 @@ while true; do
             format_outputfile_line
 
             echo "$OUTPUTLINE" >>$OUTPUTFILE
-            echo "Appending line: $OUTPUTLINE"
+            NUM_LINES_WRITTEN_STDOUT=$[$NUM_LINES_WRITTEN_STDOUT +1]
+            
+            # should we print also to stdout?
+            if [[ $NUM_LINES_WRITTEN_STDOUT -lt 5 || $VERBOSE = true ]]; then
+                echo "Appending line $NUM_LINES_WRITTEN_STDOUT: $OUTPUTLINE"
+            elif [[ $NUM_LINES_WRITTEN_STDOUT = 5 && $VERBOSE = false ]]; then
+                echo "[verbose mode is off, logging continues on the output file, not on stdout]"
+            fi
             
             sleep $INTERVAL
         else
             echo "The check done at"
             echo "    $(date)"
             echo "detected a possible restart in some component since one of"
-			for (( i=0; i<$NUM_PROCESSES; i++ )); do
-				echo " ${AUX_PROCESS[$i]}, with PID = ${AUX_PROCESS_PID[$i]}"
-			done
+            for (( i=0; i<$NUM_PROCESSES; i++ )); do
+                echo " ${AUX_PROCESS_NAME[$i]}, with PID = ${AUX_PROCESS_PID[$i]}"
+            done
             echo "is not valid anymore... waiting 2min before restarting logging"
             SETUP_DONE=false
             sleep 120
         fi
     else
         setup
-        if ! $SETUP_DONE; then
+        if $SETUP_DONE; then
+            NUM_LINES_WRITTEN_STDOUT=0
+        else
             echo "The setup attempt done at"
             echo "    $(date)"
             echo "failed. Retrying in 2min"
