@@ -13,13 +13,13 @@ to analyze the behaviour of a process.
 
 # Example Run
 
-<tt>
+```
     Usage: ./CPU_MEM_monitor.sh THREADNAME_REGEX [USE_PIDSTAT]
     Automates TOP/PIDSTAT monitoring and resource usage statistics export for Excel import
       THREADNAME_REGEX = expression matching one or more thread names running on the system
                          e.g. 'mythread\|myotherthread'
       USE_PIDSTAT = if 'yes', pidstat rather than top will be used (default=no)
-</tt>
+```
 
 For example, assume you want to monitor a process called "multithread" that generates several (e.g., 20) threads;
 the following screenshot shows the result of calling:
