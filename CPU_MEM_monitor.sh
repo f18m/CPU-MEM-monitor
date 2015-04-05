@@ -18,7 +18,7 @@
 # v0.8: if the processes die for some reason, retry in an infinite loop until they go up again,
 #       instead of doing only 1 attempt
 # v0.9: support variable-number of auxiliary processes; provide default values for both aux processes & threadname,
-#     
+# v1.0: 
 #
 # Note that 
 #
@@ -51,6 +51,7 @@ AUX_PROCESS_NAME[1]="firefox"
 # example default thread name to look for (see multithread_example.c):
 THREADNAME="multithread"
 
+# write all .csv contents also to stdout?
 VERBOSE=false
 
 # by default use TOP
@@ -69,6 +70,10 @@ NUM_PROCESSES=${#AUX_PROCESS_NAME[@]}
 #  AUX_PROCESS_MEM
 #  AUX_PROCESS_CPU
 
+# log file for ctrl/err messages
+LOGFILE="$0"
+LOGFILE="${LOGFILE%.*}.log"
+
 
 
 # utilities functions
@@ -78,7 +83,7 @@ function show_help()
 {
     echo "Usage: $0 [-h] [-v] [--use-pidstat] [-t THREADNAME_REGEX] [-p AUX_PROCESS1] [-p AUX_PROCESS2] ..."
     echo "Version 0.9, by Francesco Montorsi"
-    echo "Automates TOP/PIDSTAT monitoring and resource usage statistics export for Excel import"
+    echo "Automates TOP/PIDSTAT monitoring and resource usage statistics logging to a .CSV file"
     echo "  -h              this help"
     echo "  -v              be verbose"
     echo "  --use-pidstat   pidstat rather than top will be used"
@@ -91,6 +96,8 @@ function show_help()
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
         echo "  AUX_PROCESS #$i: ${AUX_PROCESS_NAME[$i]}"
     done
+    echo "  Output .csv file name will be automatically generated based on current date and hostname."
+    echo "  Associated to the .csv also a .log file containing info messages will be generated."
 }      
 
 function parse_args()
@@ -135,6 +142,18 @@ function parse_args()
             ;;
         esac
     done
+}
+
+function echo_info
+{
+    echo "$*"
+    echo "INFO: $(date): $*" >>$LOGFILE
+}
+
+function echo_err
+{
+    echo "$*"
+    echo "ERR: $(date): $*" >>$LOGFILE
 }
 
 function fix_mem_by_top_for_excel()
@@ -295,25 +314,6 @@ function parse_pidstat
 
 function install_toprc
 {
-custom_toprc=$(cat <<EOF
-RCfile for "top with windows"       # shameless braggin'
-Id:a, Mode_altscr=0, Mode_irixps=1, Delay_time=3.000, Curwin=0
-Def fieldscur=aehioqtwKNmbcdfgjplrsuvyzX
-    winflags=128313, sortindx=23, maxtasks=0
-    summclr=1, msgsclr=1, headclr=3, taskclr=1
-Job fieldscur=ABcefgjlrstuvyzMKNHIWOPQDX
-    winflags=62777, sortindx=0, maxtasks=0
-    summclr=6, msgsclr=6, headclr=7, taskclr=6
-Mem fieldscur=ANOPQRSTUVbcdefgjlmyzWHIKX
-    winflags=62777, sortindx=13, maxtasks=0
-    summclr=5, msgsclr=5, headclr=4, taskclr=5
-Usr fieldscur=ABDECGfhijlopqrstuvyzMKNWX
-    winflags=62777, sortindx=4, maxtasks=0
-    summclr=3, msgsclr=3, headclr=2, taskclr=3
-EOF
-)
-
-
 # this custom .toprc shows very few columns and orders them by CPU% (so that if TOP is used while recording usage, it still shows something usable!)
 #    PID  VIRT   %CPU %MEM COMMAND
 
@@ -338,11 +338,11 @@ EOF
     TOPRC="$HOME/.toprc"
     TOPRC_BACKUP="$HOME/BACKUP.toprc"
     if [[ -e $TOPRC ]]; then
-        echo "Saving a backup copy of $TOPRC as $TOPRC_BACKUP"
+        echo_info "Saving a backup copy of $TOPRC as $TOPRC_BACKUP"
         mv $TOPRC $TOPRC_BACKUP
     fi
     
-    echo "Installing custom $TOPRC"
+    echo_info "Installing custom $TOPRC"
     echo "$custom_toprc_with_pid" >$TOPRC
 }
 
@@ -361,10 +361,10 @@ function set_top_args
     # TOP delay option works only when in non-secure mode... check if we can use it:
     top -b -n 1 -d $TOP_DELAY >/dev/null 2>&1
     if [[ "$?" = "0" ]]; then
-        echo "TOP secure mode is disabled: a delay of $TOP_DELAY sec will be used"
+        echo_info "TOP secure mode is disabled: a delay of $TOP_DELAY sec will be used"
         DELAY_ARG="-d $TOP_DELAY"
     else
-        echo "TOP secure mode is enabled: the delay of TOP cannot be changed"
+        echo_info "TOP secure mode is enabled: the delay of TOP cannot be changed"
     fi
     
     # set also process PID option
@@ -449,8 +449,15 @@ function check_if_aux_processes_are_alive
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
         ps -p ${AUX_PROCESS_PID[$i]} >/dev/null 2>&1
         if [[ $? != 0 ]]; then 
-            ISALIVE=false; 
-            echo ; echo "${AUX_PROCESS_NAME[$i]} (PID=${AUX_PROCESS_PID[$i]}) is dead..." ; echo ; 
+            ISALIVE=false
+            str="${AUX_PROCESS_NAME[$i]} (PID=${AUX_PROCESS_PID[$i]}) is dead... logging stopped." 
+            
+            echo
+            echo_err "$str"
+            echo
+            
+            # write also on the output file (even if this breaks the .csv!):
+            echo "$str" >>$OUTPUTFILE
         fi
     done
 }
@@ -543,58 +550,67 @@ function sanitize_name
 
 function setup
 {
-    # print config
-    echo "Number of processes to monitor: $NUM_PROCESSES"
-    for (( i=0; i<$NUM_PROCESSES; i++ )); do
-        echo "  process #$i: ${AUX_PROCESS_NAME[$i]}"
-    done
+    # print config (we do it later)
+    #echo "Number of processes to monitor: $NUM_PROCESSES"
+    #for (( i=0; i<$NUM_PROCESSES; i++ )); do
+    #    echo "  process #$i: ${AUX_PROCESS_NAME[$i]}"
+    #done
     
     # default value:
-    OUTPUTFILE="$(hostname)-$THREADNAME-$(date +%F-started-at%H-%M)$PIDSTAT_POTSFIX.csv"
+    OUTPUTFILE="$(hostname)-$(date +%F-started-at%H-%M)-$THREADNAME$PIDSTAT_POTSFIX.csv"
     OUTPUTFILE=$(sanitize_name $OUTPUTFILE)
 
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
         AUX_PROCESS_PID[$i]=`pidof ${AUX_PROCESS_NAME[$i]} | awk '{print $1;}'`
         if [[ -z ${AUX_PROCESS_PID[$i]} ]]; then 
-            echo "No ${AUX_PROCESS_NAME[$i]} found..." ; 
+            echo_err "no process named [${AUX_PROCESS_NAME[$i]}] found... cannot proceed." ; 
             SETUP_DONE=false; 
             return; 
         fi
     done
 
+    echo_info "Successfully collected all PIDs of the $NUM_PROCESSES auxiliary processes"
+
 
     # before using any TOP function, install our custom TOP config file:
     if $USEPIDSTAT; then
-        echo "All threads activities will be monitored using pidstat utility."
+        echo_info "All threads activities will be monitored using pidstat utility."
         parse_pidstat     # we use it to fill NUM_THREADS
     else
-        echo "All threads activities will be monitored using top utility."
+        echo_info "All threads activities will be monitored using top utility."
         install_toprc
         set_top_args
         parse_top     # we use it to fill NUM_THREADS
     fi
 
-
-    echo "CPU activity logger starting with configuration:"
-    echo "  VERBOSE: $VERBOSE"
-    echo "  USEPIDSTAT: $USEPIDSTAT"
-    echo "  THREADNAME_REGEX: $THREADNAME ($NUM_THREADS threads matching)"
-    echo "  Auxiliary processes automatically monitored:"
-    for (( i=0; i<$NUM_PROCESSES; i++ )); do
-        echo "    ${AUX_PROCESS_NAME[$i]}, with PID = ${AUX_PROCESS_PID[$i]}"
-    done
-    echo "  Automatically-generated output filename: $OUTPUTFILE"
-
     if [[ $NUM_THREADS = 0 ]]; then
-        echo "The thread REGEX $THREADNAME does not mach any thread..."
+        echo_err "the thread REGEX $THREADNAME does not match any thread running on the system... cannot proceed."
         SETUP_DONE=false
         return
     fi
 
-    echo "Starting logging..."
+    
+
+    # setup is OK, show the config we will be using:
+    
+    echo_info "CPU activity logger starting with configuration:"
+    echo_info "  VERBOSE: $VERBOSE"
+    echo_info "  USEPIDSTAT: $USEPIDSTAT"
+    echo_info "  THREADNAME_REGEX: $THREADNAME ($NUM_THREADS threads matching)"
+    echo_info "  Automatically-set log filename: $LOGFILE"
+    echo_info "  Automatically-generated output filename: $OUTPUTFILE"
+    echo_info "  Auxiliary processes automatically monitored:"
+    for (( i=0; i<$NUM_PROCESSES; i++ )); do
+        echo_info "     process #$i: ${AUX_PROCESS_NAME[$i]}, with PID = ${AUX_PROCESS_PID[$i]}"
+    done
+
+    echo_info "starting logging..."
+    
+    # write header line to file:
+    
     format_outputfile_header
     echo "$OUTPUTLINE" >$OUTPUTFILE
-    echo "Data format is $OUTPUTLINE"
+    echo_info "Data format is $OUTPUTLINE"
     
     SETUP_DONE=true
 }
@@ -612,6 +628,7 @@ while true; do
         check_if_aux_processes_are_alive
         if $ISALIVE; then
 
+            # sample CPU & memory:
             if $USEPIDSTAT; then
                 parse_pidstat
             else
@@ -620,25 +637,20 @@ while true; do
             get_resources_auxprocesses
             format_outputfile_line
 
+            # write to output file
             echo "$OUTPUTLINE" >>$OUTPUTFILE
             NUM_LINES_WRITTEN_STDOUT=$[$NUM_LINES_WRITTEN_STDOUT +1]
             
             # should we print also to stdout?
             if [[ $NUM_LINES_WRITTEN_STDOUT -lt 5 || $VERBOSE = true ]]; then
-                echo "Appending line $NUM_LINES_WRITTEN_STDOUT: $OUTPUTLINE"
+                echo_info "Appending line $NUM_LINES_WRITTEN_STDOUT: $OUTPUTLINE"
             elif [[ $NUM_LINES_WRITTEN_STDOUT = 5 && $VERBOSE = false ]]; then
-                echo "[verbose mode is off, logging continues on the output file, not on stdout]"
+                echo_info "[verbose mode is off, logging continues on the output file, not on stdout]"
             fi
             
             sleep $INTERVAL
         else
-            echo "The check done at"
-            echo "    $(date)"
-            echo "detected a possible restart in some component since one of"
-            for (( i=0; i<$NUM_PROCESSES; i++ )); do
-                echo " ${AUX_PROCESS_NAME[$i]}, with PID = ${AUX_PROCESS_PID[$i]}"
-            done
-            echo "is not valid anymore... waiting 2min before restarting logging"
+            echo_err "one or more (see above) of the auxiliary processes to monitor is dead... waiting 2min to check if it does restart."
             SETUP_DONE=false
             sleep 120
         fi
@@ -647,9 +659,7 @@ while true; do
         if $SETUP_DONE; then
             NUM_LINES_WRITTEN_STDOUT=0
         else
-            echo "The setup attempt done at"
-            echo "    $(date)"
-            echo "failed. Retrying in 2min"
+            echo_err "the attempt to restart logging failed. Retrying in 2min."
             sleep 120
         fi
     fi
