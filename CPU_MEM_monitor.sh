@@ -4,7 +4,7 @@
 # Original Author: S. Mele
 # Rewritten by: F. Montorsi
 # Creation: Nov 2014
-# Last change: Apr 2015
+# Last change: Mar 2015
 #
 # HISTORY:
 # v0.2: use CPU% as sort key
@@ -20,6 +20,7 @@
 # v0.9: support variable-number of auxiliary processes; provide default values for both aux processes & threadname
 # v1.0: increase robustness by registering thread PIDs at script startup and then using them later
 #       to check TOP results, to avoid problems with programs creating/killing threads dynamically
+# v1.1: unset arrays to avoid problems with dirty contents from previous runs; use "local" keyword
 #
 # Note that:
 #
@@ -33,7 +34,7 @@
 
 
 # global configs
-# --------------------------------------------
+# ------------------------------------------------------------------------------------------------------------------------------------
 
 # Excel and OpenOffice Calc seem to liek the comma more than the dot as decimal separator:
 OUTPUT_COMMA_AS_DECIMAL_SEPARATOR=1
@@ -60,7 +61,7 @@ PIDSTAT_POTSFIX=""
 
 
 # global vars
-# --------------------------------------------
+# ------------------------------------------------------------------------------------------------------------------------------------
 
 NUM_PROCESSES=${#AUX_PROCESS_NAME[@]}
 
@@ -68,7 +69,7 @@ NUM_PROCESSES=${#AUX_PROCESS_NAME[@]}
 LOGFILE="$0"
 LOGFILE="${LOGFILE%.*}.log"
 
-SCRIPT_VERSION="1.0"
+SCRIPT_VERSION="1.1"
 
 # other arrays created later:
 # for aux process monitoring:
@@ -85,7 +86,7 @@ SCRIPT_VERSION="1.0"
 
 
 # utilities functions
-# --------------------------------------------
+# ------------------------------------------------------------------------------------------------------------------------------------
 
 function show_help()
 {
@@ -117,9 +118,9 @@ function show_help()
 
 function parse_args()
 {
-    currp=0
+    local currp=0
     while [[ $# -ge 1 ]]; do
-        key="$1"
+        local key="$1"
         shift
         
         #echo "KEY: $key"
@@ -238,12 +239,20 @@ function ask_proceed_or_abort()
     fi
 }
 
+
+
+
+
+# parsing functions
+# ------------------------------------------------------------------------------------------------------------------------------------
+
+
 function parse_pidstat
 {
     # compared to TOP, PIDSTAT has the advantage that the columns always have the same INDEXES,
     # and same SORTING regardless of the user configuration for TOP utility:
     
-    selected_lines=$(pidstat -u -r -t -I -C $THREADNAME)
+    local selected_lines=$(pidstat -u -r -t -I -C $THREADNAME)
     #echo "$selected_lines"
     
     # example of SELECTED_THREADS_STATS contents for THREADNAME=mythread
@@ -293,12 +302,12 @@ function parse_pidstat
     # CPU= num of CPU where the thread is allocated, use %CPU to understand how much CPU was really used!
     
     # first of all, we split the portion containing CPU usages from the portion about memory:
-    selected_lines_cpu=$(echo "$selected_lines" | grep -B10000 "RSS" | grep $THREADNAME)
-    nlines_cpu=`echo "$selected_lines_cpu" | wc -l`
+    local selected_lines_cpu=$(echo "$selected_lines" | grep -B10000 "RSS" | grep $THREADNAME)
+    local nlines_cpu=`echo "$selected_lines_cpu" | wc -l`
     #echo "$selected_lines_cpu"
     
-    selected_lines_memory=$(echo "$selected_lines" | grep -A10000 "RSS" | grep $THREADNAME)
-    nlines_memory=`echo "$selected_lines_memory" | wc -l`
+    local selected_lines_memory=$(echo "$selected_lines" | grep -A10000 "RSS" | grep $THREADNAME)
+    local nlines_memory=`echo "$selected_lines_memory" | wc -l`
     #echo "$selected_lines_memory"
 
     if [[ "$nlines_cpu" != "$nlines_memory" ]]; then
@@ -309,11 +318,11 @@ function parse_pidstat
     
     
     # NOTE: MEM column is the 7-th and is equal for all threads
-    selected_mem_column=`echo "$selected_lines_memory" | awk '{print $7}' | head -1`
+    local selected_mem_column=`echo "$selected_lines_memory" | awk '{print $7}' | head -1`
     #echo "$selected_mem_column"
     
     # NOTE: CPU% column is the 8-th (DO NOT USE "CPU" COLUMN, IT'S THE INDEX OF A CORE!!):
-    selected_cpu_column=`echo "$selected_lines_cpu" | awk '{print $8}'`
+    local selected_cpu_column=`echo "$selected_lines_cpu" | awk '{print $8}'`
     #echo "$selected_cpu_column"
  
     # output vars:
@@ -363,7 +372,7 @@ EOF
 
 function detect_top_version
 {
-    ver_output=$(top -v)
+    local ver_output=$(top -v)
     if [[ $ver_output == *procps-ng* ]]; then
         IS_TOP_NG=true
     else
@@ -401,9 +410,15 @@ function set_top_args
 
 function init_table_pid_threadname
 {
-    selected_lines=$(top -b -n 1 $SHOW_THREADS_ARG $DELAY_ARG | grep $THREADNAME)
+    NUM_THREADS=0
+    unset PID_TO_THREADNAME
+
+    # clear other vars used by parse_top
+    unset IGNORED_PIDS
+    unset NOTFOUND_PIDS
+    
+    local selected_lines=$(top -b -n 1 $SHOW_THREADS_ARG $DELAY_ARG | grep $THREADNAME)
     if [[ -z "$selected_lines" ]]; then
-        NUM_THREADS=0
         return
     fi
     
@@ -424,23 +439,23 @@ function init_table_pid_threadname
     
     # reorder lines based on thread names
     # in this way we basically override the sort key defined in the .toprc and that is mostly useful for human inspection
-    selected_lines=$(echo "$selected_lines" | sort -k5)
+    local selected_lines=$(echo "$selected_lines" | sort -k5)
     #echo "$selected_lines"                     # for debugging
     
     # NOTE: PID column is the 1-st
-    selected_pid_column=`echo "$selected_lines" | awk '{print $1}'`
+    local selected_pid_column=`echo "$selected_lines" | awk '{print $1}'`
     #echo "$selected_pid_column"
-    selected_pid_column_arr=($selected_pid_column)
+    local selected_pid_column_arr=($selected_pid_column)
 
     # NOTE: COMMAND column is the 5-th, we use it to detect thread name
-    selected_threadname_column=`echo "$selected_lines" | awk '{print $5}'`
+    local selected_threadname_column=`echo "$selected_lines" | awk '{print $5}'`
     #echo "$selected_threadname_column"
-    selected_threadname_column_arr=($selected_threadname_column)
+    local selected_threadname_column_arr=($selected_threadname_column)
     
     # output vars: NUM_THREADS and PID_TO_THREADNAME
-    num_threads=`echo "$selected_lines" | wc -l`
+    local num_threads=`echo "$selected_lines" | wc -l`
     for (( i=0; i<$num_threads; i++ )); do
-        pid="${selected_pid_column_arr[$i]}"
+        local pid="${selected_pid_column_arr[$i]}"
         PID_TO_THREADNAME[$pid]="${selected_threadname_column_arr[$i]}"
         #echo "for PID $pid, thread name is: ${PID_TO_THREADNAME[$pid]}"
     done
@@ -452,7 +467,7 @@ function init_table_pid_threadname
 
 function parse_top
 {
-    selected_lines=$(top -b -n 1 $SHOW_THREADS_ARG $DELAY_ARG | grep $THREADNAME)
+    local selected_lines=$(top -b -n 1 $SHOW_THREADS_ARG $DELAY_ARG | grep $THREADNAME)
     if [[ -z "$selected_lines" ]]; then
         NUM_THREADS=0
         return
@@ -461,27 +476,27 @@ function parse_top
     #echo "$selected_lines"                     # for debugging    
     
     # NOTE: PID column is the 1-st
-    selected_pid_column=`echo "$selected_lines" | awk '{print $1}'`
+    local selected_pid_column=`echo "$selected_lines" | awk '{print $1}'`
     #echo "$selected_pid_column"
-    selected_pid_column_arr=($selected_pid_column)
+    local selected_pid_column_arr=($selected_pid_column)
     
     # NOTE: %CPU column is the 3-th:
-    selected_cpu_column=`echo "$selected_lines" | awk '{print $3}'`
+    local selected_cpu_column=`echo "$selected_lines" | awk '{print $3}'`
     #echo "$selected_cpu_column"
-    selected_cpu_column_arr=($selected_cpu_column)
+    local selected_cpu_column_arr=($selected_cpu_column)
  
     # NOTE: COMMAND column is the 5-th, we use it to detect thread name
-    selected_threadname_column=`echo "$selected_lines" | awk '{print $5}'`
+    local selected_threadname_column=`echo "$selected_lines" | awk '{print $5}'`
     #echo "$selected_threadname_column"
-    selected_threadname_column_arr=($selected_threadname_column)
+    local selected_threadname_column_arr=($selected_threadname_column)
     
     
     # NOTE: VIRT column is the 2-th and is equal for all threads => we can take just the first line
     # IMPORTANT: VIRT indicates how much memory the process has allocated; RES indicates how much it has effectively used
     #            from programmer point of view, VIRT is what we need to check!!!
-    selected_mem_column=`echo "$selected_lines" | awk '{print $2}' | head -1`
+    local selected_mem_column=`echo "$selected_lines" | awk '{print $2}' | head -1`
     #echo "$selected_mem_column"
-    selected_mem_column_arr=($selected_mem_column)
+    local selected_mem_column_arr=($selected_mem_column)
     
     
     # now from the variables above prepare output arrays taking infos only for those threads
@@ -489,11 +504,11 @@ function parse_top
     
     unset CPUVALUES
     
-    num_threads=${#selected_pid_column_arr[@]}
+    local num_threads=${#selected_pid_column_arr[@]}
     for (( i=0; i<$num_threads; i++ )); do
-        pid="${selected_pid_column_arr[$i]}"
-        cpuvalue="${selected_cpu_column_arr[$i]}"
-        threadname="${selected_threadname_column_arr[$i]}"
+        local pid="${selected_pid_column_arr[$i]}"
+        local cpuvalue="${selected_cpu_column_arr[$i]}"
+        local threadname="${selected_threadname_column_arr[$i]}"
        
         if [[ -z "${PID_TO_THREADNAME[$pid]}" ]]; then
         
@@ -512,8 +527,9 @@ function parse_top
     
     # now check if we found all the threads we are monitoring:
     
+    NUM_THREADS_NOTFOUND=0
     for pid in "${!PID_TO_THREADNAME[@]}"; do 
-        threadname="${PID_TO_THREADNAME[$pid]}"
+        local threadname="${PID_TO_THREADNAME[$pid]}"
         # echo "PID/CPU/NAME: $pid ${CPUVALUES[$pid]} ${PID_TO_THREADNAME[$pid]}"           # for debug
         
         if [[ -z "${CPUVALUES[$pid]}" ]]; then
@@ -525,6 +541,8 @@ function parse_top
                 echo_err "The thread named '$threadname' (PID=$pid) has died... setting CPU=-1% for it. [warning shown only once]"
                 NOTFOUND_PIDS[$pid]="registered"
             fi
+            
+            (( NUM_THREADS_NOTFOUND++ ))
         fi
     done
 
@@ -534,6 +552,12 @@ function parse_top
     # help Excel import process:
     MEMVALUE=$(fix_mem_by_top_for_excel $MEMVALUE)
 }
+
+
+
+
+# aux processes utility functions
+# ------------------------------------------------------------------------------------------------------------------------------------
 
 function check_if_aux_processes_are_alive
 {
@@ -559,7 +583,7 @@ function get_resources_auxprocesses
 {
     # by using -H option with our custom .toprc, we revert to "show threads OFF"
     #echo "args: $DELAY_ARG, $AUX_PROCESSES_PID_ARG"
-    selected_lines=$(top -b -n 1 $HIDE_THREADS_ARG $DELAY_ARG $AUX_PROCESSES_PID_ARG)
+    local selected_lines=$(top -b -n 1 $HIDE_THREADS_ARG $DELAY_ARG $AUX_PROCESSES_PID_ARG)
     #echo "$selected_lines"
     
     # example output:
@@ -588,7 +612,13 @@ function get_resources_auxprocesses
     done
 }
 
-function format_outputfile_header
+
+
+
+# output file utility functions
+# ------------------------------------------------------------------------------------------------------------------------------------
+
+function write_outputfile_header
 {
     # NOTE: by using ; we allow Excel to directly understand the resulting file, without IMPORT steps
     
@@ -606,9 +636,12 @@ function format_outputfile_header
     for pid in "${!PID_TO_THREADNAME[@]}"; do
         OUTPUTLINE="$OUTPUTLINE;CPU ${PID_TO_THREADNAME[$pid]}"
     done
+    
+    # truncate output file and write:
+    echo "$OUTPUTLINE" >$OUTPUTFILE
 }
 
-function format_outputfile_dataline
+function write_outputfile_dataline
 {
     # NOTE: by using ; we allow Excel to directly understand the resulting file, without IMPORT steps
     
@@ -628,6 +661,9 @@ function format_outputfile_dataline
     for pid in "${!PID_TO_THREADNAME[@]}"; do
         OUTPUTLINE="$OUTPUTLINE;${CPUVALUES[$pid]}"
     done
+    
+    # append:
+    echo "$OUTPUTLINE" >>$OUTPUTFILE
 }
 
 function sanitize_name
@@ -640,6 +676,9 @@ function sanitize_name
     # return value by echo:
     echo $CLEAN
 }
+
+
+
 
 function setup
 {
@@ -701,8 +740,7 @@ function setup
     
     # write header line to file:
     
-    format_outputfile_header
-    echo "$OUTPUTLINE" >$OUTPUTFILE
+    write_outputfile_header
     echo_info "Data format is $OUTPUTLINE"
     
     SETUP_DONE=true
@@ -728,21 +766,29 @@ while true; do
                 # TOP seems to produce more accurate CPU usage % compared to pidstat
                 parse_top
             fi
-            get_resources_auxprocesses
-            format_outputfile_dataline
+            
+            
+            if (( $NUM_THREADS_NOTFOUND > $NUM_THREADS/2 )); then
+                # it looks like something wrong... redo setup
+                echo_err "Of the $NUM_THREADS threads to monitor, $NUM_THREADS_NOTFOUND were not found. Restarting monitoring in 2min."
+                SETUP_DONE=false
+                sleep 120
+            else
+                get_resources_auxprocesses
+                
+                # write to output file
+                write_outputfile_dataline
 
-            # write to output file
-            echo "$OUTPUTLINE" >>$OUTPUTFILE
-            NUM_LINES_WRITTEN_STDOUT=$[$NUM_LINES_WRITTEN_STDOUT +1]
-            
-            # should we print also to stdout?
-            if [[ $NUM_LINES_WRITTEN_STDOUT -lt 5 || $VERBOSE = true ]]; then
-                echo_info "Appending line $NUM_LINES_WRITTEN_STDOUT: $OUTPUTLINE"
-            elif [[ $NUM_LINES_WRITTEN_STDOUT = 5 && $VERBOSE = false ]]; then
-                echo_info "[verbose mode is off, logging continues on the output file, not on stdout]"
+                # should we print also to stdout?
+                NUM_LINES_WRITTEN_STDOUT=$[$NUM_LINES_WRITTEN_STDOUT +1]
+                if [[ $NUM_LINES_WRITTEN_STDOUT -lt 5 || $VERBOSE = true ]]; then
+                    echo_info "Appending line $NUM_LINES_WRITTEN_STDOUT: $OUTPUTLINE"
+                elif [[ $NUM_LINES_WRITTEN_STDOUT = 5 && $VERBOSE = false ]]; then
+                    echo_info "[verbose mode is off, logging continues on the output file, not on stdout]"
+                fi
+                
+                sleep $INTERVAL
             fi
-            
-            sleep $INTERVAL
         else
             echo_err "one or more (see above) of the auxiliary processes to monitor is dead... waiting 2min to check if it does restart."
             SETUP_DONE=false
