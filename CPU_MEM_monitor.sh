@@ -103,7 +103,8 @@ function show_help()
     echo "  USEPIDSTAT: $USEPIDSTAT"
     echo "  THREADNAME_REGEX: $THREADNAME"
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
-        echo "  AUX_PROCESS #$i: ${AUX_PROCESS_NAME[$i]}"
+        j=$(( i+1 ))            # just to make our array appear 1-based (indeed it is 0-based internally!)
+        echo "  AUX_PROCESS$j: ${AUX_PROCESS_NAME[$i]}"
     done
     echo "  Output .csv file name will be automatically generated based on current date and hostname."
     echo "  Associated to the .csv also a .log file containing info messages will be generated."
@@ -141,7 +142,7 @@ function parse_args()
             ;;
             
             -p)
-            AUX_PROCESS_NAME[$currp]="$1"
+            new_process_list[$currp]="$1"
             currp=$[$currp +1]
             shift
             ;;
@@ -158,6 +159,12 @@ function parse_args()
             ;;
         esac
     done
+    
+    unset AUX_PROCESS_NAME
+    AUX_PROCESS_NAME=$new_process_list
+    NUM_PROCESSES=${#AUX_PROCESS_NAME[@]}
+    
+    echo ${AUX_PROCESS_NAME}
 }
 
 function echo_info
@@ -693,7 +700,7 @@ function setup
     OUTPUTFILE=$(sanitize_name $OUTPUTFILE)
 
     for (( i=0; i<$NUM_PROCESSES; i++ )); do
-        AUX_PROCESS_PID[$i]=`pidof ${AUX_PROCESS_NAME[$i]} | awk '{print $1;}'`
+        AUX_PROCESS_PID[$i]=`pgrep -n ${AUX_PROCESS_NAME[$i]}`
         if [[ -z ${AUX_PROCESS_PID[$i]} ]]; then 
             echo_err "no process named [${AUX_PROCESS_NAME[$i]}] found... cannot proceed." ; 
             SETUP_DONE=false; 
@@ -701,8 +708,9 @@ function setup
         fi
     done
 
-    echo_info "Successfully collected all PIDs of the $NUM_PROCESSES auxiliary processes"
-
+    if (( $NUM_PROCESSES > 0 )); then
+        echo_info "Successfully collected all PIDs of the $NUM_PROCESSES auxiliary processes"
+    fi
 
     # before using any TOP function, install our custom TOP config file:
     if $USEPIDSTAT; then
@@ -731,10 +739,14 @@ function setup
     echo_info "  THREADNAME_REGEX: $THREADNAME ($NUM_THREADS threads matching)"
     echo_info "  Automatically-set log filename: $LOGFILE"
     echo_info "  Automatically-generated output filename: $OUTPUTFILE"
-    echo_info "  Auxiliary processes automatically monitored:"
-    for (( i=0; i<$NUM_PROCESSES; i++ )); do
-        echo_info "     process #$i: ${AUX_PROCESS_NAME[$i]}, with PID = ${AUX_PROCESS_PID[$i]}"
-    done
+    
+    if (( $NUM_PROCESSES > 0 )); then
+        echo_info "  Auxiliary processes automatically monitored:"
+        for (( i=0; i<$NUM_PROCESSES; i++ )); do
+            j=$(( i+1 ))            # just to make our array appear 1-based (indeed it is 0-based internally!)
+            echo_info "     aux process #$j: ${AUX_PROCESS_NAME[$i]}, with PID = ${AUX_PROCESS_PID[$i]}"
+        done
+    fi
 
     echo_info "starting logging..."
     
