@@ -21,6 +21,9 @@
 # v1.0: increase robustness by registering thread PIDs at script startup and then using them later
 #       to check TOP results, to avoid problems with programs creating/killing threads dynamically
 # v1.1: unset arrays to avoid problems with dirty contents from previous runs; use "local" keyword
+# v1.2: use pgrep -n instead of pidof to get PIDs of processes, to allow monitoring processes having
+#       multiple instances running (only the newest instance will be monitored!); allow disabling
+#       the monitor of auxiliary processes with -p NONE
 #
 # Note that:
 #
@@ -69,7 +72,7 @@ NUM_PROCESSES=${#AUX_PROCESS_NAME[@]}
 LOGFILE="$0"
 LOGFILE="${LOGFILE%.*}.log"
 
-SCRIPT_VERSION="1.1"
+SCRIPT_VERSION="1.2"
 
 # other arrays created later:
 # for aux process monitoring:
@@ -97,7 +100,7 @@ function show_help()
     echo "  -v              be verbose"
     echo "  --use-pidstat   pidstat rather than top will be used"
     echo "  -t <tregex>     monitor threads whose name match the regex <tregex>; e.g. 'mythread\|myotherthread'"
-    echo "  -p <auxproc>    monitor CPU and memory usage of the auxiliary process <auxproc>"
+    echo "  -p <auxproc>    monitor CPU and memory usage of the auxiliary process <auxproc>; use NONE for <auxproc> to disable this feature"
     echo "Default option values:"
     echo "  VERBOSE: $VERBOSE"
     echo "  USEPIDSTAT: $USEPIDSTAT"
@@ -114,7 +117,8 @@ function show_help()
     echo "  Thread monitoring collects per-thread CPU% and MEMORY values."
     echo
     echo "  If a monitored aux process dies, the script will attempt to restart logging process completely."
-    echo "  If a monitored thread ends, the script will do nothing and continue logging."
+    echo "  If a monitored thread ends, the script will do nothing and continue logging (writing CPU=-1% for the dead thread)."
+    echo "  Auxiliary process monitoring can be disabled using '-p NONE' option."
 }      
 
 function parse_args()
@@ -142,8 +146,13 @@ function parse_args()
             ;;
             
             -p)
-            new_process_list[$currp]="$1"
-            currp=$[$currp +1]
+            if [[ "$1" == "NONE" ]]; then
+                unset AUX_PROCESS_NAME
+                NUM_PROCESSES=${#AUX_PROCESS_NAME[@]}
+            else
+                new_process_list[$currp]="$1"
+                currp=$[$currp +1]
+            fi
             shift
             ;;
             
@@ -160,11 +169,11 @@ function parse_args()
         esac
     done
     
-    unset AUX_PROCESS_NAME
-    AUX_PROCESS_NAME=$new_process_list
-    NUM_PROCESSES=${#AUX_PROCESS_NAME[@]}
-    
-    echo ${AUX_PROCESS_NAME}
+    if [[ ! -z $new_process_list ]]; then
+        unset AUX_PROCESS_NAME
+        AUX_PROCESS_NAME=$new_process_list
+        NUM_PROCESSES=${#AUX_PROCESS_NAME[@]}
+    fi
 }
 
 function echo_info
