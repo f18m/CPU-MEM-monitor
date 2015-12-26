@@ -78,7 +78,7 @@ The .csv file can be easily plotted to get an idea of the thread CPU usage and t
 # How To Install
 
 ```
-    $ wget http://raw.githubusercontent.com/f18m/CPU-MEM-monitor/master/CPU_MEM_monitor.sh
+    $ wget --no-check-certificate http://raw.githubusercontent.com/f18m/CPU-MEM-monitor/master/CPU_MEM_monitor.sh
     $ chmod a+x CPU_MEM_monitor.sh                      # ensure execute permissions
     $ sudo mv CPU_MEM_monitor.sh  /usr/local/bin        # make it available system-wide
 ```
@@ -100,7 +100,7 @@ the directory where the script has been launched and analyse the logged CPU/memo
 The "decimate_compress_csv.sh" script available from:
 
 ```
-    $ wget http://raw.githubusercontent.com/f18m/CPU-MEM-monitor/master/decimate_compress_csv.sh
+    $ wget --no-check-certificate http://raw.githubusercontent.com/f18m/CPU-MEM-monitor/master/decimate_compress_csv.sh
     $ chmod a+x decimate_compress_csv.sh        # ensure execute permissions
     $ sudo mv decimate_compress_csv.sh  /usr/local/bin
 ```
