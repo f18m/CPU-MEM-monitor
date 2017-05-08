@@ -4,7 +4,7 @@
 # Original Author: S. Mele
 # Rewritten by: F. Montorsi
 # Creation: Nov 2014
-# Last change: Mar 2015
+# Last change: May 2017
 #
 # HISTORY:
 # v0.2: use CPU% as sort key
@@ -24,6 +24,7 @@
 # v1.2: use pgrep -n instead of pidof to get PIDs of processes, to allow monitoring processes having
 #       multiple instances running (only the newest instance will be monitored!); allow disabling
 #       the monitor of auxiliary processes with -p NONE
+# v1.3: fixed bug with multiple -p option parsing
 #
 # Note that:
 #
