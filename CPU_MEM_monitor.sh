@@ -39,16 +39,17 @@
 # global configs
 # ------------------------------------------------------------------------------------------------------------------------------------
 
-# Excel and OpenOffice Calc seem to liek the comma more than the dot as decimal separator:
-OUTPUT_COMMA_AS_DECIMAL_SEPARATOR=1
+# Excel and OpenOffice Calc seem to like the comma more than the dot as decimal separator:
+declare -r OUTPUT_COMMA_AS_DECIMAL_SEPARATOR=1
 
 # defines how much "average" CPU usage results: 3sec is the default... lower means higher temporal resolution, higher means more smoothy averages
-TOP_DELAY=5
+declare -r TOP_DELAY=5
 
 # how often should I log (in sec)
-INTERVAL=1
+declare -r INTERVAL=1
 
 # example default "auxiliary" processes to monitor for aggregated CPU usage and memory usage:
+declare -a AUX_PROCESS_NAME
 AUX_PROCESS_NAME[0]="multithread"
 
 # example default thread name to look for (see multithread_example.c):
@@ -124,6 +125,7 @@ function show_help()
 function parse_args()
 {
     local currp=0
+    local -a new_process_list
     while [[ $# -ge 1 ]]; do
         local key="$1"
         shift
@@ -150,8 +152,9 @@ function parse_args()
                 unset AUX_PROCESS_NAME
                 NUM_PROCESSES=${#AUX_PROCESS_NAME[@]}
             else
+                #echo "New process added: $1"
                 new_process_list[$currp]="$1"
-                currp=$[$currp +1]
+                currp=$(( $currp+1 ))
             fi
             shift
             ;;
@@ -170,9 +173,9 @@ function parse_args()
     done
     
     if [[ ! -z $new_process_list ]]; then
-        unset AUX_PROCESS_NAME
-        AUX_PROCESS_NAME=$new_process_list
+        AUX_PROCESS_NAME=("${new_process_list[@]}")                  # copying an array has a strange syntax in Bash!!!
         NUM_PROCESSES=${#AUX_PROCESS_NAME[@]}
+        #echo "NUM_PROCESSES is $NUM_PROCESSES"
     fi
 }
 
@@ -771,6 +774,7 @@ function setup
 
 # main
 
+set -u				# Treat unset variables as an error when substituting.
 parse_args $*
 
 SETUP_DONE=false
