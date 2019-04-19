@@ -20,6 +20,17 @@ The script is also useful to analyze a (multithreaded) process during a long amo
 For such usage scenario it is convenient to use the <a href="https://www.linode.com/docs/networking/ssh/using-gnu-screen-to-manage-persistent-terminal-sessions">screen utility</a>.
 
 
+# Deprecation Warning
+
+Note that this project is not actively developed anymore. If you are looking for a CPU/memory monitor I suggest you
+to checkout my recent project:
+
+ https://github.com/f18m/nmon-cgroup-aware
+ 
+It is a fork of Nigel's performance Monitor for Linux, adding cgroup-awareness, which makes it easy to monitor 
+your baremetal or LXC/Docker container performances with a nice JSON-to-HTML converter utility.
+
+
 # Command Line Interface
 
 The script accepts the following command-line options:
