@@ -25,10 +25,11 @@ For such usage scenario it is convenient to use the <a href="https://www.linode.
 Note that this project is not actively developed anymore. If you are looking for a CPU/memory monitor I suggest you
 to checkout my recent project:
 
- https://github.com/f18m/nmon-cgroup-aware
+ https://github.com/f18m/cmonitor
  
 It is a fork of Nigel's performance Monitor for Linux, adding cgroup-awareness, which makes it easy to monitor 
 your baremetal or LXC/Docker container performances with a nice JSON-to-HTML converter utility.
+It provides all features of CPU-MEM-monitor in a more modern solution (HTML output or InfluxDB integration).
 
 
 # Command Line Interface
